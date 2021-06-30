@@ -5,7 +5,7 @@ using Fresa                     # for optimization
 using Printf                    # for formatted output
 using PyPlot                    # for plotting profiles
 
-const tfinal = 120.0         # hours
+const tfinal = 390.0         # hours
 const T = 303.0              # Kelvin
 const pH = 7.0
 const F = 0.5
@@ -85,7 +85,7 @@ function simulation(profile :: PiecewiseLinearProfile)
         # efficient solver
         tspan = (0.0,tfinal)
         prob = ODEProblem(reactor, [0.05, 40.0, 0.0], tspan, profile)
-        results = DifferentialEquations.solve(prob,saveat = 1.0)
+        results = DifferentialEquations.solve(prob,saveat = 20.0)
         results
     else
         δt = tfinal/1e4
