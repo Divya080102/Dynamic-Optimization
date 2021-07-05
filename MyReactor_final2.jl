@@ -56,6 +56,44 @@ function volume(profile :: PiecewiseLinearProfile, t :: Float64) :: Float64	#Fin
     return V
 end
 
+mutable struct QuadraticSplineProfile 		#simulation for quadratic profile 
+    V0 :: Float64               # initial temperature
+    Vf :: Float64               # final temperature
+    t1 :: Float64               # time point 
+    a :: Float64                # coefficients of quadratics
+    b :: Float64
+    c :: Float64
+    d :: Float64
+    e :: Float64
+    f :: Float64
+    function QuadraticSplineProfile(V0, Vf, t1)
+        a = V0
+        b = 0
+        c = (Vf-V0)/t1
+        d = (Vf*t1 - V0) / (t1 - 1)
+        e = (2*V0 - 2*Vf) / (t1 - 1)
+        f = (Vf - V0) / (t1 - 1)
+        new(V0, Vf, t1, a, b, c, d, e, f)
+    end
+end
+
+function volume(p :: QuadraticSplineProfile, t :: Float64) :: Float64
+    if t <= p.t1
+        V = p.a + p.b*t + p.c*t^2
+    else
+        V = p.d + p.e*t + p.f*t^2
+    end
+   # println("$V")
+    if(V>Vmax)
+    	V = Vmax
+    end
+  #  if(V>Vmax)
+#	exit()
+  #  end
+    return V
+end
+
+
 #function to formulate the mathematical equations of the paper
 function reactor(delements, elements :: Array{Float64}, 	#the array elements contains values of X(microbial growth concentration), S(concentration of substrate), P(concentration of Product) respectively
 		 p :: PiecewiseLinearProfile,			
