@@ -28,8 +28,6 @@ mutable struct PiecewiseLinearProfile <: VolumeProfile	#mutable structure to sto
         new(t.ft, t.F, t.V0)
     end
 end
-# allow up to 10 degrees change per time interval
-ΔV_max = 40.0
 
 function Feedrate(p:: PiecewiseLinearProfile, tf :: Float64)		#function to return feedrate at any given time
      F = 0.0
@@ -62,7 +60,7 @@ function Vl(profile :: PiecewiseLinearProfile, t :: Float64) :: Float64		#functi
         if t < τ + Δτ
             # partial step to reach desired time
             V += ΔV * (t-τ)/Δτ
-            # correct T if out of bounds
+            # correct V if out of bounds
             if V < Vmin
                 V = Vmin
             elseif V>Vmax
@@ -93,9 +91,6 @@ function reactor(delements, elements :: Array{Float64}, 	#the array elements con
                  ) 
      F = Feedrate(p,tf)			
      V = Vl(p,tf)
-
-    		#constant CO concentration in the reactor
-    # println("$t")
     X, P, S, CO = elements
     
     delements[1] = ((5.53537543*(10^-12)*(S/(S + 0.1828*X))*(CO/(0.0352*X + CO))*(1-(X/0.87))) - (4.60796599*(10^-62)*(1-(CO/(0.0368+CO)))) - F/V)*X
@@ -139,22 +134,17 @@ function simulation(profile :: PiecewiseLinearProfile)		#do the simulation
     if efficient
         # efficient solver
         tspan = (0.0,tfinal)
-	 	
-        prob = ODEProblem(reactor, [0.05, 0.0, 10.0, 0.01], tspan, profile)
+	prob = ODEProblem(reactor, [0.05, 0.0, 10.0, 0.01], tspan, profile)	#input initial values of Biomass, product, substrate and dissolved oxygen concentration
         results = DifferentialEquations.solve(prob,saveat = 19.5)
         results
     else
         δt = tfinal/1e6
         t = 0.0
-        var :: Array{Float64} = [0.05, 0.0, 10.0, 0.01]
+        var :: Array{Float64} = [0.05, 0.0, 10.0, 0.01]		
         while t < tfinal
             if t+δt > tfinal
                 δt = tfinal - t
             end
-	 #   V = Vl(profile,t+δt)
-	 #   if(V>Vmax)
-#		break
-#	    end
             δvar = δt * reactor(var,profile,t+δt)
             var = var + δvar
 	    t = t + δt
