@@ -5,31 +5,60 @@ using Fresa                     # for optimization
 using Printf                    # for formatted output
 using PyPlot                    # for plotting profiles
 
-#constant conditions of the reactor - 
-const tfinal = 390.0		# hours
-const T = 303.0			# Kelvin
-const pH = 7.0			#Value of pH for the reactions
-const F = 0.5			#feedrate
-const Vmax = 100.0		#Maximum volume of contents of the reactor(= volume of the reactor container)
-const Vmin = 60.0		#Initial volume of the reactor
+const tfinal = 120.0              # time in hours
+const Vmin = 60.0              # in Litres
+const Vmax = 100.0              # in Litres
 
-mutable struct PiecewiseLinearProfile	#Structure to create profile for time spent in the batch reactor
+abstract type VolumeProfile end
+
+mutable struct PiecewiseLinearProfile <: VolumeProfile	#mutable structure to store feedrate vs time profile
     ft :: Array{Float64}        # time deltas
-    function PiecewiseLinearProfile(ft)	
-	new(ft)
+    F :: Array{Float64}        # temperature deltas
+    V0 :: Float64               # initial temperature
+    function PiecewiseLinearProfile(ft, F, V0)
+        if length(ft) != length(F)		#check for equal number of feedrate and time intervals
+            error("Number of time points and temperature changes must match.")
+        end
+        if V0 < Vmin || V0 > Vmax
+            error("V0 = $(V0) not in [$Vmin,$Vmax]")
+        end
+        new(ft,F,V0)
     end
     function PiecewiseLinearProfile(t :: PiecewiseLinearProfile)
-        new(t.ft)
+        new(t.ft, t.F, t.V0)
     end
 end
+# allow up to 10 degrees change per time interval
+ΔV_max = 40.0
 
-function volume(profile :: PiecewiseLinearProfile, t :: Float64) :: Float64	#Finding volume at a particular time point
-										#Rate of volume change = Feedrate(F) = 0.5
-    τ = 0
-    V = Vmin	
+function Feedrate(p:: PiecewiseLinearProfile, tf :: Float64)		#function to return feedrate at any given time
+     F = 0.0
+     flag = 0
+     for i=1:(length(p.ft)-1)
+	if(tf>=p.ft[i] && tf<p.ft[i+1])
+		F = p.F[i]
+		flag = 1
+	end
+     end
+     if(flag == 0)
+	F = p.F[length(p.ft)]
+     end
+     return F
+end
+    
+
+function Vl(profile :: PiecewiseLinearProfile, t :: Float64) :: Float64		#function to return volume at any given time using the feedrate 
+    τ = 0 
+    V = profile.V0
     for i=1:length(profile.ft)
-        Δτ = profile.ft[i] * (tfinal - τ)
-	ΔV = F*Δτ
+	if(i == length(profile.ft))
+		Δτ = tfinal - profile.ft[i]
+	else
+        	Δτ = profile.ft[i+1] - profile.ft[i] 
+	end
+	
+        ΔV = profile.F[i] * Δτ
+#	println("delta t, V = $Δτ $ΔV")
         if t < τ + Δτ
             # partial step to reach desired time
             V += ΔV * (t-τ)/Δτ
@@ -44,7 +73,7 @@ function volume(profile :: PiecewiseLinearProfile, t :: Float64) :: Float64	#Fin
         else
             # take full step
             V += ΔV
-            # correct T if out of bounds
+            # correct V if out of bounds
             if V < Vmin
                 V = Vmin
             elseif V>Vmax
@@ -53,69 +82,55 @@ function volume(profile :: PiecewiseLinearProfile, t :: Float64) :: Float64	#Fin
         end
         τ += Δτ
     end
+   # println("$V $t")
     return V
 end
-
-mutable struct QuadraticSplineProfile 		#simulation for quadratic profile 
-    V0 :: Float64               # initial temperature
-    Vf :: Float64               # final temperature
-    t1 :: Float64               # time point 
-    a :: Float64                # coefficients of quadratics
-    b :: Float64
-    c :: Float64
-    d :: Float64
-    e :: Float64
-    f :: Float64
-    function QuadraticSplineProfile(V0, Vf, t1)
-        a = V0
-        b = 0
-        c = (Vf-V0)/t1
-        d = (Vf*t1 - V0) / (t1 - 1)
-        e = (2*V0 - 2*Vf) / (t1 - 1)
-        f = (Vf - V0) / (t1 - 1)
-        new(V0, Vf, t1, a, b, c, d, e, f)
-    end
-end
-
-function volume(p :: QuadraticSplineProfile, t :: Float64) :: Float64
-    if t <= p.t1
-        V = p.a + p.b*t + p.c*t^2
-    else
-        V = p.d + p.e*t + p.f*t^2
-    end
-   # println("$V")
-    if(V>Vmax)
-    	V = Vmax
-    end
-  #  if(V>Vmax)
-#	exit()
-  #  end
-    return V
-end
-
 
 #function to formulate the mathematical equations of the paper
-function reactor(delements, elements :: Array{Float64}, 	#the array elements contains values of X(microbial growth concentration), S(concentration of substrate), P(concentration of Product) respectively
+function reactor(delements, elements :: Array{Float64}, 	#the array elements contains values of X(microbial growth concentration), P(concentration of Product),S(concentration of substrate), CO(dissolved oxygen content) respectively
 		 p :: PiecewiseLinearProfile,			
 		 tf:: Float64
                  ) 
-   # t = time(p,tf)
-    V = volume(p,tf)		#finding the volume of reactor contents at a given time tf
- #   println("Volume = $V")
-    CO = 0.037		#constant CO concentration in the reactor
+     F = Feedrate(p,tf)			
+     V = Vl(p,tf)
+
+    		#constant CO concentration in the reactor
     # println("$t")
-    X, S, P = elements
+    X, P, S, CO = elements
+    
     delements[1] = ((5.53537543*(10^-12)*(S/(S + 0.1828*X))*(CO/(0.0352*X + CO))*(1-(X/0.87))) - (4.60796599*(10^-62)*(1-(CO/(0.0368+CO)))) - F/V)*X
-    delements[2] = -0.0624*X - 4*(((5.53537543*(10^-12)*(S/(S + 0.1828*X))*(CO/(0.0352*X + CO))*(1-(X/0.87))) - (4.60796599*(10^-62)*(1-(CO/(0.0368+CO)))) - F/V)*X) - ((1/0.68)* 0.05*S*X/(0.0002+S+(10*S^2)) - 4*10^(-4)*P - F*P/V) - F*X/V
-    delements[3] =  0.05*S*X/(0.0002+S+(10*S^2)) - 4*10^(-4)*P - F*P/V			#created the ODE equations 
-  #  delements[4] =  F	
- #   print("X = $X, S = $S, P = $P")
-   # return delements
+    delements[2] =  0.05*S*X/(0.0002+S+(10*S^2)) - 4*10^(-4)*P - F*P/V	
+    delements[3] = -0.0624*X - 4*delements[1] - ((1/0.68)*delements[2]) - F*X/V 
+    delements[4] =  ((1.2720140414/(V^0.4))*(0.037 - CO)) - (0.004*X) - ((1/43.5)*delements[1]) - ((1/253.3)*delements[2]) - (F*CO/V)	#created the ODE equations
+end
+
+function Vplot(profile :: PiecewiseLinearProfile)	#function to plot volume profile
+    n = 120
+   # δx = 1.0/1000
+    x = [1.0*i for i in 1:n+1]
+    y = [1.0*Vl(profile,x[i]) for i in 1:n+1]
+
+    PyPlot.plot(x,y, linewidth=2.0, linestyle="--", )
+    PyPlot.ylabel("Volume (K)")
+    PyPlot.xlabel("Time")
+    PyPlot.title("Volume profile")
+end
+
+function Fplot(profile :: PiecewiseLinearProfile)	#function to plot feedrate profile
+    n = 120
+   # δx = 1.0/1000
+    x = [2.0*i for i in 1:n+1]
+    y = [1.0*Feedrate(profile,x[i]) for i in 1:n+1]
+
+    PyPlot.plot(x,y)
+    PyPlot.ylabel("FeedRate (K)")
+    PyPlot.xlabel("Time")
+    PyPlot.title("Feedrate profile")
+   # PyPlot.xlim(0,200)
 end
 
 
-
-function simulation(profile :: PiecewiseLinearProfile)
+function simulation(profile :: PiecewiseLinearProfile)		#do the simulation
     # for testing some performance aspects, we have two ways of
     # simulating the reactor, i.e. solving the differential equations:
     # an efficient solver (RK 2-3) and a computationally inefficient
@@ -124,22 +139,29 @@ function simulation(profile :: PiecewiseLinearProfile)
     if efficient
         # efficient solver
         tspan = (0.0,tfinal)
-        prob = ODEProblem(reactor, [0.05, 40.0, 0.0], tspan, profile)
+	 	
+        prob = ODEProblem(reactor, [0.05, 0.0, 10.0, 0.01], tspan, profile)
         results = DifferentialEquations.solve(prob,saveat = 19.5)
         results
     else
-        δt = tfinal/1e4
+        δt = tfinal/1e6
         t = 0.0
-        var :: Array{Float64} = [0.05, 40.0, 0.0]
+        var :: Array{Float64} = [0.05, 0.0, 10.0, 0.01]
         while t < tfinal
             if t+δt > tfinal
                 δt = tfinal - t
             end
+	 #   V = Vl(profile,t+δt)
+	 #   if(V>Vmax)
+#		break
+#	    end
             δvar = δt * reactor(var,profile,t+δt)
             var = var + δvar
+	    t = t + δt
         end
         var                       # end values
     end
 end
 
 end
+
